@@ -32,9 +32,9 @@ class FrameCorners:
     (np.searchsorted).
     """
 
-    __slots__ = ('_ids', '_points', '_sizes')
+    __slots__ = ('_ids', '_points', '_sizes', '_eigen', '_dist')
 
-    def __init__(self, ids, points, sizes):
+    def __init__(self, ids, points, sizes, eigen_metrics, dist_metrics):
         """
         Construct FrameCorners.
 
@@ -48,6 +48,8 @@ class FrameCorners:
         self._ids = ids[sorting_idx].reshape(-1, 1)
         self._points = points[sorting_idx].reshape(-1, 2)
         self._sizes = sizes[sorting_idx].reshape(-1, 1)
+        self._eigen = eigen_metrics[sorting_idx].reshape(-1, 1)
+        self._dist = dist_metrics[sorting_idx].reshape(-1, 1)
 
     @property
     def ids(self):
@@ -61,10 +63,20 @@ class FrameCorners:
     def sizes(self):
         return self._sizes
 
+    @property
+    def eigen(self):
+        return self._eigen
+
+    @property
+    def dist(self):
+        return self._dist
+
     def __iter__(self):
         yield self.ids
         yield self.points
         yield self.sizes
+        yield self.eigen
+        yield self.dist
 
 
 def filter_frame_corners(frame_corners: FrameCorners,
@@ -132,7 +144,7 @@ class StorageImpl(CornerStorage):
         """
         super().__init__()
         self._corners = list(corners_for_each_frame)
-        self._max_id = max(c.ids.max() for c in self._corners)
+        self._max_id = max(c.ids.max(initial=0) for c in self._corners)
 
     def __getitem__(self, frame: int) -> FrameCorners:
         return self._corners[frame]
@@ -197,6 +209,20 @@ def without_short_tracks(corner_storage: CornerStorage,
     return StorageFilter(corner_storage, predicate)
 
 
+def filter_with_eigen_threshold(corner_storage: CornerStorage, min_e: int) -> CornerStorage:
+    def predicate(corners):
+        eigen = corners.eigen
+        return (eigen > min_e).reshape(-1,)
+    return StorageFilter(corner_storage, predicate)
+
+
+def filter_with_distance_threshold(corner_storage: CornerStorage, max_dist: int) -> CornerStorage:
+    def predicate(corners):
+        dists = corners.dist
+        return (dists < max_dist).reshape(-1,)
+    return StorageFilter(corner_storage, predicate)
+
+
 def dump(corner_storage: CornerStorage, stream: IO[bytes]) -> None:
     """
     Dump corner storage.
@@ -256,6 +282,10 @@ def create_cli(build):
                     frame -= 1
                 if key == 'd' and frame + 1 < len(corner_storage):
                     frame += 1
+                if key == 'e' and frame + 10 < len(corner_storage):
+                    frame += 10
+                if key == 'w' and frame - 10 >= 0:
+                    frame -= 10
                 if key == 'q':
                     break
                 if key == 'r':
