@@ -28,10 +28,7 @@ BLOCK_SIZE = 13
 MAX_LEVEL = 3
 MAX_ITERS = 10
 LK_EPS = 0.01
-NEW_CORNER_SEARCH_INTERVAL = 10
 MIN_TRACK_LENGTH = 10
-
-FILTER_CLOSE_CORNERS = True
 
 
 class _CornerStorageBuilder:
@@ -50,7 +47,7 @@ class _CornerStorageBuilder:
 
 class Corner:
     def __init__(self, corner, index, size, min_eigen: int, prev_dist: int):
-        self.corner = corner
+        self.corner = [corner[0], corner[1]]
         self.index = index
         self.size = size
         self.min_eigen = min_eigen
@@ -62,10 +59,21 @@ class NormalCornerStorage:
 
     def __init__(self):
         self.corners = []
+        self.corner_mask = np.zeros((2000, 2000))
 
-    def add_corner(self, corner, filter_close=False):
-        if not self.can_add(corner, filter_close):
+    def fill_mask(self, i, j):
+        d = MIN_DISTANCE
+        i = int(i)
+        j = int(j)
+        for k1 in range(i - d, i + d + 1):
+            for k2 in range(j - d, j + d + 1):
+                if (i - k1) ** 2 + (j - k2) ** 2 < d ** 2:
+                    self.corner_mask[k1][k2] = 1
+
+    def add_corner(self, corner):
+        if not self.can_add(corner):
             return
+        self.fill_mask(corner.corner[0], corner.corner[1])
         self.corners.append(corner)
 
     def add_corner1(self, corner, size, eigen, dist):
@@ -73,6 +81,7 @@ class NormalCornerStorage:
         if not self.can_add(ncorn):
             return
         self.add_corner(ncorn)
+        self.fill_mask(corner[0], corner[1])
         NormalCornerStorage.max_index += 1
 
     def add_new_corners(self, corners, size, image):
@@ -84,7 +93,7 @@ class NormalCornerStorage:
 
     @staticmethod
     def is_valid_corner(img, corner):
-        return corner[0] < img.shape[0] - 1 and corner[1] < img.shape[1] - 1
+        return corner[1] < img.shape[0] - 1 and corner[0] < img.shape[1] - 1
 
     def to_frame_corners(self):
         sizes = []
@@ -109,17 +118,10 @@ class NormalCornerStorage:
 
     def add_existing_corners(self, new_corners, image, filter_close=False):
         for ncorn in new_corners.corners:
-            self.add_corner(ncorn, filter_close)
+            self.add_corner(ncorn)
 
-    def can_add(self, corner, filter_close=False):
-        if not filter_close:
-            return True
-        to_add = True
-        for old_corn in self.corners:
-            if np.linalg.norm(np.array(old_corn.corner) - np.array(corner.corner)) < MIN_DISTANCE:
-                to_add = False
-                break
-        return to_add
+    def can_add(self, corner):
+        return self.corner_mask[int(corner.corner[0])][int(corner.corner[1])] == 0
 
 
 def get_new_corners(image):
@@ -167,9 +169,9 @@ def calc_flow(old_img, new_img, old_points):
 
 def calc_min_eigen(img, corner):
     if not NormalCornerStorage.is_valid_corner(img, corner):
-        return 0
+        return
     a = np.rint(corner).astype(np.int32)
-    return img[a[0]][a[1]]
+    return img[a[1]][a[0]]
 
 
 def calc_dist(corner, prev_corner):
@@ -207,15 +209,14 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
         eigen_img = cv2.cornerMinEigenVal(rimage_1, BLOCK_SIZE)
         for i, (old_corner, new_corner) in enumerate(zip(my_corners.corners, p1)):
-            if d[i] < 0.1:
+            if status[i] == 1 and status[0] == 1 and d[i] < 0.1:
                 x1, y1 = new_corner.ravel()
                 min_eigen = calc_min_eigen(eigen_img, new_corner)
                 dist = calc_dist(new_corner, old_corner.corner)
                 new_my_corners.add_corner(Corner([x1, y1], old_corner.index, old_corner.size, min_eigen, dist))
 
-        if frame % NEW_CORNER_SEARCH_INTERVAL == 0:
-            just_new_corners = get_new_corners(rimage_1)
-            new_my_corners.add_existing_corners(just_new_corners, rimage_1, FILTER_CLOSE_CORNERS)
+        just_new_corners = get_new_corners(rimage_1)
+        new_my_corners.add_existing_corners(just_new_corners, rimage_1)
 
         corners = new_my_corners.to_frame_corners()
 
