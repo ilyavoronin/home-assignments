@@ -22,8 +22,8 @@ from _corners import FrameCorners, CornerStorage, StorageImpl, filter_with_dista
 from _corners import dump, load, draw, without_short_tracks, create_cli
 
 QUALITY_LEVEL = 0.03
-MAX_CORNERS = 500
-MIN_DISTANCE = 15
+MAX_CORNERS = 2000
+MIN_DISTANCE = 7
 BLOCK_SIZE = 13
 MAX_LEVEL = 3
 MAX_ITERS = 10
@@ -46,7 +46,7 @@ class _CornerStorageBuilder:
 
 
 class Corner:
-    def __init__(self, corner, index, size, min_eigen: int, prev_dist: int):
+    def __init__(self, corner, index, size, min_eigen: int, prev_dist: float):
         self.corner = [corner[0], corner[1]]
         self.index = index
         self.size = size
@@ -209,7 +209,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
         eigen_img = cv2.cornerMinEigenVal(rimage_1, BLOCK_SIZE)
         for i, (old_corner, new_corner) in enumerate(zip(my_corners.corners, p1)):
-            if status[i] == 1 and status[0] == 1 and d[i] < 0.1:
+            if status[i] == 1 and status_rev[i] == 1 and d[i] < 0.1:
                 x1, y1 = new_corner.ravel()
                 min_eigen = calc_min_eigen(eigen_img, new_corner)
                 dist = calc_dist(new_corner, old_corner.corner)

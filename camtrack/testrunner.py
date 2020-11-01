@@ -176,7 +176,7 @@ def _do_tracking(test_info, ground_truth, corner_storage, test_dir):
         )
     except Exception as err:  # pylint:disable=broad-except
         click.echo('  scene solving failed: {}'.format(err))
-        return None, None
+        raise err
     else:
         click.echo('  scene solving succeeded')
         return track, point_cloud
