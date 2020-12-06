@@ -32,9 +32,9 @@ class FrameCorners:
     (np.searchsorted).
     """
 
-    __slots__ = ('_ids', '_points', '_sizes', '_eigen', '_dist')
+    __slots__ = ('_ids', '_points', '_sizes')
 
-    def __init__(self, ids, points, sizes, eigen_metrics, dist_metrics):
+    def __init__(self, ids, points, sizes):
         """
         Construct FrameCorners.
 
@@ -48,8 +48,6 @@ class FrameCorners:
         self._ids = ids[sorting_idx].reshape(-1, 1)
         self._points = points[sorting_idx].reshape(-1, 2)
         self._sizes = sizes[sorting_idx].reshape(-1, 1)
-        self._eigen = eigen_metrics[sorting_idx].reshape(-1, 1)
-        self._dist = dist_metrics[sorting_idx].reshape(-1, 1)
 
     @property
     def ids(self):
@@ -63,20 +61,10 @@ class FrameCorners:
     def sizes(self):
         return self._sizes
 
-    @property
-    def eigen(self):
-        return self._eigen
-
-    @property
-    def dist(self):
-        return self._dist
-
     def __iter__(self):
         yield self.ids
         yield self.points
         yield self.sizes
-        yield self.eigen
-        yield self.dist
 
 
 def filter_frame_corners(frame_corners: FrameCorners,
@@ -206,20 +194,6 @@ def without_short_tracks(corner_storage: CornerStorage,
     def predicate(corners):
         return counter[corners.ids.flatten()] >= min_len
 
-    return StorageFilter(corner_storage, predicate)
-
-
-def filter_with_eigen_threshold(corner_storage: CornerStorage, min_e: int) -> CornerStorage:
-    def predicate(corners):
-        eigen = corners.eigen
-        return (eigen > min_e).reshape(-1,)
-    return StorageFilter(corner_storage, predicate)
-
-
-def filter_with_distance_threshold(corner_storage: CornerStorage, max_dist: int) -> CornerStorage:
-    def predicate(corners):
-        dists = corners.dist
-        return (dists < max_dist).reshape(-1,)
     return StorageFilter(corner_storage, predicate)
 
 

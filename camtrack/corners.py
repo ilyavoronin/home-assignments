@@ -7,9 +7,7 @@ __all__ = [
     'dump',
     'load',
     'draw',
-    'without_short_tracks',
-    'filter_with_distance_threshold',
-    'filter_with_eigen_threshold'
+    'without_short_tracks'
 ]
 
 import click
@@ -17,18 +15,17 @@ import cv2
 import numpy as np
 import pims
 
-from _corners import FrameCorners, CornerStorage, StorageImpl, filter_with_distance_threshold, \
-    filter_with_eigen_threshold
+from _corners import FrameCorners, CornerStorage, StorageImpl
 from _corners import dump, load, draw, without_short_tracks, create_cli
 
-QUALITY_LEVEL = 0.03
-MAX_CORNERS = 2000
+QUALITY_LEVEL = 0.005
+MAX_CORNERS = 4000
 MIN_DISTANCE = 7
 BLOCK_SIZE = 13
 MAX_LEVEL = 3
 MAX_ITERS = 10
 LK_EPS = 0.01
-MIN_TRACK_LENGTH = 10
+MIN_TRACK_LENGTH = 3
 
 
 class _CornerStorageBuilder:
@@ -99,21 +96,15 @@ class NormalCornerStorage:
         sizes = []
         corners = []
         indexes = []
-        eigen = []
-        dist = []
         for corner in self.corners:
             sizes.append(corner.size)
             corners.append(corner.corner)
             indexes.append(corner.index)
-            eigen.append(corner.min_eigen)
-            dist.append(corner.prev_dist)
 
         return FrameCorners(
             np.array(indexes),
             np.array(corners),
-            np.array(sizes),
-            np.array(eigen),
-            np.array(dist)
+            np.array(sizes)
         )
 
     def add_existing_corners(self, new_corners, image, filter_close=False):
@@ -209,7 +200,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
         eigen_img = cv2.cornerMinEigenVal(rimage_1, BLOCK_SIZE)
         for i, (old_corner, new_corner) in enumerate(zip(my_corners.corners, p1)):
-            if status[i] == 1 and status_rev[i] == 1 and d[i] < 0.1:
+            if status[i] == 1 and status_rev[i] == 1 and d[i] < 1.0:
                 x1, y1 = new_corner.ravel()
                 min_eigen = calc_min_eigen(eigen_img, new_corner)
                 dist = calc_dist(new_corner, old_corner.corner)
@@ -242,7 +233,7 @@ def build(frame_sequence: pims.FramesSequence,
     else:
         builder = _CornerStorageBuilder()
         _build_impl(frame_sequence, builder)
-    return without_short_tracks(builder.build_corner_storage(), MIN_TRACK_LENGTH)
+    return builder.build_corner_storage()
 
 
 if __name__ == '__main__':

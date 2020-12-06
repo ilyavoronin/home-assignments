@@ -22,11 +22,11 @@ from _camtrack import (
     build_correspondences,
     pose_to_view_mat3x4,
     rodrigues_and_translation_to_view_mat3x4,
-    check_baseline,
+    check_baseline, Correspondences,
 )
 
-MAX_REPROJECTION_ERROR = 2.0
-MIN_ANGLE = 1.0
+MAX_REPROJECTION_ERROR = 7.0
+MIN_ANGLE = 2.0
 MIN_DEPTH = 0
 MIN_DIST = 0.1
 
@@ -69,6 +69,8 @@ def handle_frame(
 
     for i in range(20):
         other_frame_num = frame_num + i * direction
+        if other_frame_num < 0 or other_frame_num < len(view_mat):
+            break
         if check_baseline(view_mat[other_frame_num], view_mat[frame_num], MIN_DIST):
             cor = build_correspondences(corner_storage[other_frame_num], corner_storage[frame_num], ids_to_remove=pcbuilder.ids)
             if len(cor) == 0:
@@ -88,13 +90,16 @@ def init_cloud(pcbuilder, corner_storage, intrinsic_mat, known_view1, known_view
     max_error = MAX_REPROJECTION_ERROR
     min_angle = MIN_ANGLE
     correspondences = build_correspondences(corner_storage[known_view1[0]], corner_storage[known_view2[0]])
-    while len(new_points) < 10:
+    while len(new_points) < 10 and min_angle > 0 and max_error < 10:
         new_points, ids, _ = triangulate_correspondences(correspondences, pose_to_view_mat3x4(known_view1[1]),
                                                          pose_to_view_mat3x4(known_view2[1]), intrinsic_mat,
                                                          TriangulationParameters(max_error, min_angle, MIN_DEPTH)
                                                          )
         min_angle -= 0.3
         max_error += 0.5
+    if len(new_points) < 3:
+        raise Exception("Failed to initialize point cloud")
+
     pcbuilder.add_points(ids, new_points)
 
 
@@ -120,14 +125,60 @@ def track_camera(corner_storage, intrinsic_mat, known_view1, known_view2):
     return view_mat, pcbuilder
 
 
+def find_best_init_frames(corner_storage, intrinsic_mat, nbest):
+
+    frame_pairs = []
+
+    for frame_num1 in range(len(corner_storage)):
+        for frame_num2 in range(frame_num1 + 1, min(frame_num1 + 40, len(corner_storage))):
+            cor = build_correspondences(corner_storage[frame_num1], corner_storage[frame_num2])
+            if len(cor.ids) < 20:
+                continue
+
+            ret, mask = cv2.findEssentialMat(
+                cor.points_1,
+                cor.points_2,
+                intrinsic_mat,
+                cv2.RANSAC,
+                0.99,
+                1.0
+            )
+
+            mask = (mask == 1).flatten()
+            cor = Correspondences(cor.ids[mask], cor.points_1[mask], cor.points_2[mask])
+
+            R1, R2, t = cv2.decomposeEssentialMat(ret)
+
+            rotations = [R1, R2]
+            translations = [t, -t]
+
+            for R in rotations:
+                for t in translations:
+                    a, ids, b = triangulate_correspondences(
+                        cor,
+                        eye3x4(),
+                        np.hstack((R, t)),
+                        intrinsic_mat,
+                        TriangulationParameters(MAX_REPROJECTION_ERROR, MIN_ANGLE, MIN_DEPTH)
+                    )
+
+                    frame_pairs.append((-len(ids), (frame_num1, frame_num2), np.hstack((R, t))))
+
+    frame_pairs = sorted(frame_pairs, key=lambda x: x[0])[:nbest]
+
+    final_res = []
+    for p in frame_pairs:
+        final_res.append(((p[1][0], view_mat3x4_to_pose(eye3x4())), (p[1][1], view_mat3x4_to_pose(p[2]))))
+
+    return final_res
+
+
 def track_and_calc_colors(camera_parameters: CameraParameters,
                           corner_storage: CornerStorage,
                           frame_sequence_path: str,
                           known_view_1: Optional[Tuple[int, Pose]] = None,
                           known_view_2: Optional[Tuple[int, Pose]] = None) \
         -> Tuple[List[Pose], PointCloud]:
-    if known_view_1 is None or known_view_2 is None:
-        raise NotImplementedError()
 
     rgb_sequence = frameseq.read_rgb_f32(frame_sequence_path)
     intrinsic_mat = to_opencv_camera_mat3x3(
@@ -135,7 +186,15 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         rgb_sequence[0].shape[0]
     )
 
-    view_mats, point_cloud_builder = track_camera(corner_storage, intrinsic_mat, known_view_1, known_view_2)
+    best_frames = find_best_init_frames(corner_storage, intrinsic_mat, 20)
+
+    view_mats, point_cloud_builder = None, None
+    for init_frames in best_frames:
+        try:
+            view_mats, point_cloud_builder = track_camera(corner_storage, intrinsic_mat, init_frames[0], init_frames[1])
+            break
+        except Exception:
+            continue
 
     calc_point_cloud_colors(
         point_cloud_builder,
