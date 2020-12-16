@@ -26,9 +26,11 @@ from _camtrack import (
 )
 
 MAX_REPROJECTION_ERROR = 7.0
-MIN_ANGLE = 2.0
-MIN_DEPTH = 0
+MIN_ANGLE = 3.0
+MIN_DEPTH = 0.1
 MIN_DIST = 0.1
+MAX_HOMOGRAPHY = 0.7
+
 
 def handle_frame(
         frame_num,
@@ -67,19 +69,21 @@ def handle_frame(
     else:
         view_mat[frame_num] = view_mat[frame_num + direction]
 
-    for i in range(20):
-        other_frame_num = frame_num + i * direction
-        if other_frame_num < 0 or other_frame_num < len(view_mat):
+    for i in range(-30, 30):
+        other_frame_num = frame_num + i
+        if other_frame_num < 0 or other_frame_num >= len(view_mat):
             break
+        if view_mat[other_frame_num] is None:
+            continue
         if check_baseline(view_mat[other_frame_num], view_mat[frame_num], MIN_DIST):
-            cor = build_correspondences(corner_storage[other_frame_num], corner_storage[frame_num], ids_to_remove=pcbuilder.ids)
-            if len(cor) == 0:
+            cor = build_correspondences(corner_storage[other_frame_num], corner_storage[frame_num])
+            if len(cor.ids) < 3:
                 continue
             new_points, ids, _ = triangulate_correspondences(cor,
                                                              view_mat[other_frame_num],
                                                              view_mat[frame_num],
                                                              intrinsic_mat,
-                                                             TriangulationParameters(1.0, MIN_ANGLE, MIN_DIST)
+                                                             TriangulationParameters(2.0, 1.0, MIN_DIST)
                                                              )
             pcbuilder.add_points(ids, new_points)
 
@@ -110,7 +114,7 @@ def track_camera(corner_storage, intrinsic_mat, known_view1, known_view2):
     view2 = known_view2[1]
     nframes = len(corner_storage)
     pcbuilder = PointCloudBuilder()
-    view_mat = [eye3x4()] * nframes
+    view_mat = [None] * nframes
 
     view_mat[init_frame_num1] = pose_to_view_mat3x4(view1)
     view_mat[init_frame_num2] = pose_to_view_mat3x4(view2)
@@ -121,6 +125,8 @@ def track_camera(corner_storage, intrinsic_mat, known_view1, known_view2):
         handle_frame(i, corner_storage, pcbuilder, view_mat, intrinsic_mat, 1)
 
     for i in range(init_frame_num1 + 1, nframes):
+        if i == init_frame_num2:
+            continue
         handle_frame(i, corner_storage, pcbuilder, view_mat, intrinsic_mat, -1)
     return view_mat, pcbuilder
 
@@ -144,8 +150,15 @@ def find_best_init_frames(corner_storage, intrinsic_mat, nbest):
                 1.0
             )
 
+            if ret is None:
+                continue
+
             mask = (mask == 1).flatten()
             cor = Correspondences(cor.ids[mask], cor.points_1[mask], cor.points_2[mask])
+
+            _, mask1 = cv2.findHomography(cor.points_1, cor.points_2, method=cv2.RANSAC)
+            if np.count_nonzero(mask1) / np.count_nonzero(mask) > MAX_HOMOGRAPHY:
+                continue
 
             R1, R2, t = cv2.decomposeEssentialMat(ret)
 
@@ -185,16 +198,16 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         camera_parameters,
         rgb_sequence[0].shape[0]
     )
-
-    best_frames = find_best_init_frames(corner_storage, intrinsic_mat, 20)
+    best_frames = None
+    if known_view_1 is None:
+        best_frames = find_best_init_frames(corner_storage, intrinsic_mat, 5)
+    else:
+        best_frames = [(known_view_1, known_view_2)]
 
     view_mats, point_cloud_builder = None, None
     for init_frames in best_frames:
-        try:
-            view_mats, point_cloud_builder = track_camera(corner_storage, intrinsic_mat, init_frames[0], init_frames[1])
-            break
-        except Exception:
-            continue
+        view_mats, point_cloud_builder = track_camera(corner_storage, intrinsic_mat, init_frames[0], init_frames[1])
+        break
 
     calc_point_cloud_colors(
         point_cloud_builder,

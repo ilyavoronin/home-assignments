@@ -25,7 +25,7 @@ BLOCK_SIZE = 13
 MAX_LEVEL = 3
 MAX_ITERS = 10
 LK_EPS = 0.01
-MIN_TRACK_LENGTH = 3
+MIN_TRACK_LENGTH = 10
 
 
 class _CornerStorageBuilder:
@@ -233,7 +233,7 @@ def build(frame_sequence: pims.FramesSequence,
     else:
         builder = _CornerStorageBuilder()
         _build_impl(frame_sequence, builder)
-    return builder.build_corner_storage()
+    return without_short_tracks(builder.build_corner_storage(), MIN_TRACK_LENGTH)
 
 
 if __name__ == '__main__':
