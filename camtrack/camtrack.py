@@ -83,7 +83,7 @@ def handle_frame(
                                                              view_mat[other_frame_num],
                                                              view_mat[frame_num],
                                                              intrinsic_mat,
-                                                             TriangulationParameters(2.0, 1.0, MIN_DIST)
+                                                             TriangulationParameters(MAX_REPROJECTION_ERROR, MIN_ANGLE, MIN_DIST)
                                                              )
             pcbuilder.add_points(ids, new_points)
 
